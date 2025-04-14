@@ -1,81 +1,74 @@
-import os
-import requests
 import streamlit as st
-from dotenv import load_dotenv
+import requests
 import pandas as pd
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
+from datetime import datetime
 
-# First command
-st.set_page_config(page_title="📉 Stock Visualizer", layout="wide")
+# Set page config (this must be first!)
+st.set_page_config(page_title="Crypto Market Dashboard", layout="wide")
 
-# Auto-refresh every 15 minutes
-st_autorefresh(interval=15 * 60 * 1000, key="stock-refresh")
+# Refresh every 15 minutes (900000 ms)
+st_autorefresh(interval=900000, key="refresh")
 
-# Load Alpha Vantage key
-load_dotenv()
-alpha_key = os.getenv("stockapi_key")
+# Your Polygon.io API key
+API_KEY = "Z9nJVv8cOxoaJZI55yR5ZzLQsmZaBgyn"  # 🔁 Replace this with your key
 
-# Sidebar settings
-st.sidebar.title("Settings")
-symbol = st.sidebar.text_input("Stock Symbol", "RELIANCE.BSE")  # e.g., "AAPL" or "RELIANCE.BSE"
-interval = st.sidebar.selectbox("Interval", ["1min", "5min", "15min", "60min", "daily"], index=3)
-refresh = st.sidebar.button("🔄 Manual Refresh")
+st.title("📊 Real-Time Crypto Market Dashboard")
 
-st.title(f"Live Market Chart: {symbol}")
+# Sidebar
+st.sidebar.header("Settings")
+crypto_symbol = st.sidebar.selectbox(
+    "Choose Crypto Pair (Symbol)",
+    ["X:BTCUSD", "X:ETHUSD", "X:MATICUSD", "X:DOGEUSD", "X:SOLUSD"]
+)
 
-# Alpha Vantage URL
-if interval == "daily":
-    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}&apikey={alpha_key}"
-    key_name = "Time Series (Daily)"
+interval = st.sidebar.selectbox("Chart Interval", ["minute", "hour", "day"])
+
+from datetime import datetime, timedelta
+
+to = datetime.today()
+from_ = to - timedelta(days=1)
+from_str = from_.strftime('%Y-%m-%d')
+to_str = to.strftime('%Y-%m-%d')
+
+# Get data from Polygon
+def get_crypto_data(symbol, timespan):
+    url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/{timespan}/{from_str}/{to_str}?apiKey={API_KEY}&limit=100"
+    r = requests.get(url)
+    print("Request URL:", url)
+    print("Status Code:", r.status_code)
+    print("Response Text:", r.text)
+
+    data = r.json()
+
+    if "results" not in data:
+        return None
+
+    df = pd.DataFrame(data["results"])
+    df["t"] = pd.to_datetime(df["t"], unit="ms")
+    df.rename(columns={"t": "time", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}, inplace=True)
+    return df
+
+# Fetch and display
+data = get_crypto_data(crypto_symbol, interval)
+
+if data is None:
+    st.error("Failed to fetch data. Check symbol or API key.")
 else:
-    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&apikey={alpha_key}"
-    key_name = f"Time Series ({interval})"
+    latest = data.iloc[-1]
+    st.metric(label="Current Price", value=f"${latest['close']:.2f}")
+    st.metric(label="24H Volume", value=f"{latest['volume']:.2f}")
 
-res = requests.get(url).json()
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=data['time'],
+        open=data['open'],
+        high=data['high'],
+        low=data['low'],
+        close=data['close'],
+        name='Price'
+    ))
 
-if key_name in res:
-    ts_data = res[key_name]
-    df = pd.DataFrame.from_dict(ts_data, orient="index").rename(columns={
-        "1. open": "open",
-        "2. high": "high",
-        "3. low": "low",
-        "4. close": "close",
-        "5. volume": "volume"
-    })
-    df = df.astype(float)
-    df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-
-    # Display latest stats
-    latest_price = df["close"].iloc[-1]
-    prev_price = df["close"].iloc[-2]
-    pct_change = ((latest_price - prev_price) / prev_price) * 100
-
-    st.metric(label="📈 Latest Price", value=f"{latest_price:.2f}", delta=f"{pct_change:.2f}%")
-
-    # Candlestick chart
-    fig = go.Figure(data=[
-        go.Candlestick(
-            x=df.index,
-            open=df["open"],
-            high=df["high"],
-            low=df["low"],
-            close=df["close"],
-            name="Price"
-        )
-    ])
-    fig.update_layout(title=f"📉 {symbol.upper()} Price Chart", xaxis_title="Time", yaxis_title="Price",
-                      xaxis_rangeslider_visible=False, template="plotly_dark", height=500)
+    fig.update_layout(title=f"{crypto_symbol.replace('X:', '')} Price Chart ({interval})", xaxis_title="Time", yaxis_title="Price (USD)", xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
-
-    # Volume bar chart
-    vol_fig = go.Figure()
-    vol_fig.add_trace(go.Bar(x=df.index, y=df["volume"], marker_color='lightblue', name="Volume"))
-    vol_fig.update_layout(title="🔊 Volume Traded", xaxis_title="Time", yaxis_title="Volume", height=300)
-    st.plotly_chart(vol_fig, use_container_width=True)
-
-    with st.expander("🧾 Raw Data Table"):
-        st.dataframe(df.tail(20).reset_index().rename(columns={"index": "Time"}))
-else:
-    st.warning("Failed to fetch data. Check your API key, symbol, or interval.")

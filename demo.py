@@ -57,7 +57,7 @@ def get_tone_score(tone):
     return 0.5  # default
 
 if st.button("Fetch News"):
-    url = f"https://newsapi.org/v2/everything?q=india%20finance&sortBy=publishedAt&apiKey={newsapi_key}"
+    url = f"https://newsapi.org/v2/everything?q=cryptocurrency%20OR%20bitcoin%20OR%20ethereum&language=en&sortBy=publishedAt&apiKey={newsapi_key}"
     res = requests.get(url).json()
 
     st.json(res)
